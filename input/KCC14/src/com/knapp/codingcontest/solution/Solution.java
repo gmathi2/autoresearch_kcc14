@@ -169,6 +169,10 @@ public class Solution {
 
   private boolean tryAssignSpecificOrder(AeroBot bot, Order order, Set<Integer> currentlyAssigned) {
     Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
+    Rack.RackStorageLocation bestRsl = null;
+    Container bestContainer = null;
+    int minCharge = Integer.MAX_VALUE;
+
     for (Container container : containers) {
       if (botAssignedContainer.containsValue(container.getCode())) continue;
 
@@ -177,21 +181,29 @@ public class Solution {
         Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
 
         int estimatedCharge = estimateFetchPickCharge(bot, rsl, order, container);
-        if (bot.getCurrentCharge() < estimatedCharge + 1000) return false;
+        if (estimatedCharge < minCharge) {
+            minCharge = estimatedCharge;
+            bestRsl = rsl;
+            bestContainer = container;
+        }
+      }
+    }
+
+    if (bestContainer != null) {
+        if (bot.getCurrentCharge() < minCharge + 1000) return false;
 
         botAssignedOrder.put(bot, order.getSequence());
-        botAssignedContainer.put(bot, container.getCode());
-        botContainerHome.put(bot, rsl);
+        botAssignedContainer.put(bot, bestContainer.getCode());
+        botContainerHome.put(bot, bestRsl);
         currentlyAssigned.add(order.getSequence());
 
-        bot.planMoveToWaypoint(rsl.getWaypoint());
-        bot.planClimbToLevel(rsl.getLevel());
-        bot.planLoadContainer(container);
+        bot.planMoveToWaypoint(bestRsl.getWaypoint());
+        bot.planClimbToLevel(bestRsl.getLevel());
+        bot.planLoadContainer(bestContainer);
         bot.planClimbToLevel(0);
         bot.planMoveToWaypoint(warehouse.getPickArea());
         bot.planPick(order);
         return true;
-      }
     }
     return false;
   }
