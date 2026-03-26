@@ -127,16 +127,75 @@ public class Solution {
         }
     }
 
-    // 4. Sequential greedy matching for bots without containers
-    List<Order> unassigned = new ArrayList<>();
-    for (Order o : candidates) {
+    // 4. Match bots without containers
+    // First, globally greedy for pick area orders
+    List<Order> unassignedPick = new ArrayList<>();
+    for (Order o : warehouse.getPickArea().getCurrentOrders()) {
         if (!currentlyAssigned.contains(o.getSequence())) {
-            unassigned.add(o);
+            unassignedPick.add(o);
         }
     }
 
-    while (!botsWithoutContainer.isEmpty() && !unassigned.isEmpty()) {
-        Order order = unassigned.get(0);
+    while (!botsWithoutContainer.isEmpty() && !unassignedPick.isEmpty()) {
+        AeroBot bestBot = null;
+        Order bestOrder = null;
+        Rack.RackStorageLocation bestRsl = null;
+        Container bestContainer = null;
+        int minCharge = Integer.MAX_VALUE;
+
+        for (AeroBot bot : botsWithoutContainer) {
+            for (Order order : unassignedPick) {
+                Assignment bestForPair = findBestContainerForPair(bot, order);
+                if (bestForPair != null && bestForPair.charge < minCharge) {
+                    minCharge = bestForPair.charge;
+                    bestBot = bot;
+                    bestOrder = order;
+                    bestRsl = bestForPair.rsl;
+                    bestContainer = bestForPair.container;
+                }
+            }
+        }
+
+        if (bestBot != null) {
+            if (bestBot.getCurrentCharge() >= minCharge + 1000) {
+                botAssignedOrder.put(bestBot, bestOrder.getSequence());
+                botAssignedContainer.put(bestBot, bestContainer.getCode());
+                botContainerHome.put(bestBot, bestRsl);
+                currentlyAssigned.add(bestOrder.getSequence());
+
+                bestBot.planMoveToWaypoint(bestRsl.getWaypoint());
+                bestBot.planClimbToLevel(bestRsl.getLevel());
+                bestBot.planLoadContainer(bestContainer);
+                bestBot.planClimbToLevel(0);
+                bestBot.planMoveToWaypoint(warehouse.getPickArea());
+                bestBot.planPick(bestOrder);
+            }
+            botsWithoutContainer.remove(bestBot);
+            unassignedPick.remove(bestOrder);
+        } else {
+            break; // No more possible assignments
+        }
+    }
+
+    // Then, sequential greedy matching for future orders
+    List<Order> unassignedFuture = new ArrayList<>();
+    for (Order o : candidates) {
+        if (!currentlyAssigned.contains(o.getSequence())) {
+            // only add if not already handled
+            boolean isPickArea = false;
+            for (Order po : warehouse.getPickArea().getCurrentOrders()) {
+                if (po.getSequence().equals(o.getSequence())) {
+                    isPickArea = true; break;
+                }
+            }
+            if (!isPickArea) {
+                unassignedFuture.add(o);
+            }
+        }
+    }
+
+    while (!botsWithoutContainer.isEmpty() && !unassignedFuture.isEmpty()) {
+        Order order = unassignedFuture.get(0);
         AeroBot bestBot = null;
         Rack.RackStorageLocation bestRsl = null;
         Container bestContainer = null;
@@ -168,7 +227,7 @@ public class Solution {
             }
             botsWithoutContainer.remove(bestBot);
         }
-        unassigned.remove(0);
+        unassignedFuture.remove(0);
     }
   }
 
