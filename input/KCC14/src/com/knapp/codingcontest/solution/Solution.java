@@ -44,6 +44,7 @@ public class Solution {
   
   private final Map<AeroBot, Integer> botAssignedOrder = new HashMap<>();
   private final Map<AeroBot, String> botAssignedContainer = new HashMap<>();
+  private final Map<AeroBot, Rack.RackStorageLocation> botContainerHome = new HashMap<>();
 
   public Solution(final Warehouse warehouse) {
     this.warehouse = warehouse;
@@ -70,78 +71,118 @@ public class Solution {
   }
 
   private void assignTasks() {
-    // 1. Cleanup finished tasks
-    for (AeroBot bot : warehouse.getAllAeroBots()) {
-        if (bot.getOpenOperations().isEmpty()) {
-            botAssignedOrder.remove(bot);
-            botAssignedContainer.remove(bot);
-        }
-    }
-
-    Set<Integer> currentlyAssigned = new HashSet<>(botAssignedOrder.values());
+    // 1. Identify idle bots and candidates
     List<AeroBot> idleBots = new ArrayList<>();
     for (AeroBot bot : warehouse.getAllAeroBots()) {
         if (bot.getOpenOperations().isEmpty()) {
-            if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.3) {
-                bot.planMoveToWaypoint(warehouse.getChargingArea());
-                bot.planStartCharge();
-            } else {
-                idleBots.add(bot);
-            }
+            botAssignedOrder.remove(bot);
+            idleBots.add(bot);
         }
     }
 
     if (idleBots.isEmpty()) return;
 
-    // 2. Identify candidate orders (Priority: Current, then Next Open)
-    List<Order> candidates = new ArrayList<>(warehouse.getPickArea().getCurrentOrders());
-    List<Order> open = warehouse.getOpenOrders();
-    for (Order o : open) {
-        if (candidates.size() >= 50) break;
-        boolean alreadyInCandidates = false;
-        for (Order c : candidates) {
-            if (c.getSequence().equals(o.getSequence())) {
-                alreadyInCandidates = true;
-                break;
+    Set<Integer> currentlyAssigned = new HashSet<>(botAssignedOrder.values());
+    List<Order> candidates = getCandidates(currentlyAssigned);
+
+    // 2. Handle idle bots
+    for (AeroBot bot : idleBots) {
+        // Charging
+        if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.3) {
+            if (bot.getCurrentContainer() != null) {
+                planStore(bot);
+            } else {
+                bot.planMoveToWaypoint(warehouse.getChargingArea());
+                bot.planStartCharge();
+            }
+            continue;
+        }
+
+        // Reuse?
+        Container current = bot.getCurrentContainer();
+        if (current != null) {
+            Order matched = null;
+            for (Order o : candidates) {
+                if (o.getProductCode().equals(current.getProductCode()) && !currentlyAssigned.contains(o.getSequence())) {
+                    matched = o;
+                    break;
+                }
+            }
+            if (matched != null) {
+                botAssignedOrder.put(bot, matched.getSequence());
+                currentlyAssigned.add(matched.getSequence());
+                bot.planPick(matched);
+                continue;
+            } else if (!shouldWait(current.getProductCode())) {
+                planStore(bot);
+                // After storing, bot will be idle next call
+                continue;
+            } else {
+                // Wait at pick area (or wherever we are)
+                continue;
             }
         }
-        if (!alreadyInCandidates) {
-            candidates.add(o);
-        }
-    }
 
-    // 3. Assign
-    int botIdx = 0;
-    for (Order order : candidates) {
-        if (botIdx >= idleBots.size()) break;
-        if (currentlyAssigned.contains(order.getSequence())) continue;
-
-        AeroBot bot = idleBots.get(botIdx);
-        if (tryAssignSpecificOrder(bot, order)) {
-            botIdx++;
-            currentlyAssigned.add(order.getSequence());
+        // Assign new
+        for (Order order : candidates) {
+            if (currentlyAssigned.contains(order.getSequence())) continue;
+            
+            if (tryAssignSpecificOrder(bot, order, currentlyAssigned)) {
+                break;
+            }
         }
     }
   }
 
-  private boolean tryAssignSpecificOrder(AeroBot bot, Order order) {
+  private List<Order> getCandidates(Set<Integer> currentlyAssigned) {
+      List<Order> candidates = new ArrayList<>(warehouse.getPickArea().getCurrentOrders());
+      List<Order> open = warehouse.getOpenOrders();
+      for (Order o : open) {
+          if (candidates.size() >= 50) break;
+          boolean already = false;
+          for (Order c : candidates) {
+              if (c.getSequence().equals(o.getSequence())) {
+                  already = true;
+                  break;
+              }
+          }
+          if (!already) candidates.add(o);
+      }
+      return candidates;
+  }
+
+  private void planStore(AeroBot bot) {
+    Rack.RackStorageLocation rsl = botContainerHome.get(bot);
+    if (rsl == null) {
+        Collection<Rack.RackStorageLocation> empty = warehouse.findEmptyRackStorageLocations();
+        if (!empty.isEmpty()) rsl = empty.iterator().next();
+    }
+    if (rsl != null) {
+        bot.planMoveToWaypoint(rsl.getWaypoint());
+        bot.planClimbToLevel(rsl.getLevel());
+        bot.planStoreContainer();
+        bot.planClimbToLevel(0);
+    }
+    botContainerHome.remove(bot);
+    botAssignedContainer.remove(bot);
+  }
+
+  private boolean tryAssignSpecificOrder(AeroBot bot, Order order, Set<Integer> currentlyAssigned) {
     Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
     for (Container container : containers) {
-      if (botAssignedContainer.containsValue(container.getCode())) {
-        continue;
-      }
+      if (botAssignedContainer.containsValue(container.getCode())) continue;
 
       Location loc = container.getCurrentLocation();
       if (loc != null && loc.getType() == Location.Type.Rack) {
         Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
 
-        int estimatedCharge = estimateCycleCharge(bot, rsl, order, container);
-        if (bot.getCurrentCharge() < estimatedCharge + 1000) {
-          return false;
-        }
+        int estimatedCharge = estimateFetchPickCharge(bot, rsl, order, container);
+        if (bot.getCurrentCharge() < estimatedCharge + 1000) return false;
 
         botAssignedOrder.put(bot, order.getSequence());
         botAssignedContainer.put(bot, container.getCode());
+        botContainerHome.put(bot, rsl);
+        currentlyAssigned.add(order.getSequence());
 
         bot.planMoveToWaypoint(rsl.getWaypoint());
         bot.planClimbToLevel(rsl.getLevel());
@@ -149,17 +190,22 @@ public class Solution {
         bot.planClimbToLevel(0);
         bot.planMoveToWaypoint(warehouse.getPickArea());
         bot.planPick(order);
-        bot.planMoveToWaypoint(rsl.getWaypoint());
-        bot.planClimbToLevel(rsl.getLevel());
-        bot.planStoreContainer();
-        bot.planClimbToLevel(0);
         return true;
       }
     }
     return false;
   }
 
-  private int estimateCycleCharge(AeroBot bot, Rack.RackStorageLocation rsl, Order order, Container container) {
+  private boolean shouldWait(String productCode) {
+    List<Order> open = warehouse.getOpenOrders();
+    int limit = Math.min(open.size(), 30); // only wait if needed very soon
+    for (int i = 0; i < limit; i++) {
+        if (open.get(i).getProductCode().equals(productCode)) return true;
+    }
+    return false;
+  }
+
+  private int estimateFetchPickCharge(AeroBot bot, Rack.RackStorageLocation rsl, Order order, Container container) {
     int charge = 0;
     Waypoint botPos = bot.getCurrentWaypoint();
     charge += warehouse.calculateMoveToWaypoint(botPos, rsl.getWaypoint()).charge;
@@ -168,10 +214,6 @@ public class Solution {
     charge += warehouse.calculateClimbToLevel(rsl.getLevel(), 0).charge;
     charge += warehouse.calculateMoveToWaypoint(rsl.getWaypoint(), warehouse.getPickArea()).charge;
     charge += warehouse.calculatePick(order).charge;
-    charge += warehouse.calculateMoveToWaypoint(warehouse.getPickArea(), rsl.getWaypoint()).charge;
-    charge += warehouse.calculateClimbToLevel(0, rsl.getLevel()).charge;
-    charge += warehouse.calculateStoreContainer().charge;
-    charge += warehouse.calculateClimbToLevel(rsl.getLevel(), 0).charge;
     return charge;
   }
 }
