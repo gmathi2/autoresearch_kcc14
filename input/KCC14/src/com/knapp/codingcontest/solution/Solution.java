@@ -36,11 +36,11 @@ import com.knapp.codingcontest.operations.Warehouse;
  */
 public class Solution {
   public String getParticipantName() {
-    return null; // TODO: return your name
+    return "AutoResearch";
   }
 
   public Institute getParticipantInstitution() {
-    return null; // TODO: return the Id of your institute - please refer to the hand-out
+    return Institute.Sonstige;
   }
 
   // ----------------------------------------------------------------------------
