@@ -45,6 +45,7 @@ public class Solution {
   private final Map<AeroBot, Integer> botAssignedOrder = new HashMap<>();
   private final Map<AeroBot, String> botAssignedContainer = new HashMap<>();
   private final Map<AeroBot, Rack.RackStorageLocation> botContainerHome = new HashMap<>();
+  private final Set<String> currentTurnStoreReservationCodes = new HashSet<>();
 
   public Solution(final Warehouse warehouse) {
     this.warehouse = warehouse;
@@ -71,6 +72,7 @@ public class Solution {
   }
 
   private void assignTasks() {
+    currentTurnStoreReservationCodes.clear();
     // 1. Identify idle bots and candidates
     List<AeroBot> idleBots = new ArrayList<>();
     for (AeroBot bot : warehouse.getAllAeroBots()) {
@@ -152,19 +154,38 @@ public class Solution {
   }
 
   private void planStore(AeroBot bot) {
-    Rack.RackStorageLocation rsl = botContainerHome.get(bot);
-    if (rsl == null) {
-        Collection<Rack.RackStorageLocation> empty = warehouse.findEmptyRackStorageLocations();
-        if (!empty.isEmpty()) rsl = empty.iterator().next();
+    Collection<Rack.RackStorageLocation> empty = warehouse.findEmptyRackStorageLocations();
+    Rack.RackStorageLocation best = null;
+    int bestScore = Integer.MAX_VALUE;
+
+    for (Rack.RackStorageLocation rsl : empty) {
+        // Even if the API says empty, we should still check our local turn reservations
+        // and also double check with isReserved.
+        if (currentTurnStoreReservationCodes.contains(rsl.getCode()) || warehouse.isReserved(rsl)) {
+            continue;
+        }
+        int s = scoreLocation(rsl);
+        if (s < bestScore) {
+            bestScore = s;
+            best = rsl;
+        }
     }
-    if (rsl != null) {
-        bot.planMoveToWaypoint(rsl.getWaypoint());
-        bot.planClimbToLevel(rsl.getLevel());
+
+    if (best != null) {
+        currentTurnStoreReservationCodes.add(best.getCode());
+        bot.planMoveToWaypoint(best.getWaypoint());
+        bot.planClimbToLevel(best.getLevel());
         bot.planStoreContainer();
         bot.planClimbToLevel(0);
     }
     botContainerHome.remove(bot);
     botAssignedContainer.remove(bot);
+  }
+
+  private int scoreLocation(Rack.RackStorageLocation rsl) {
+      if (rsl == null) return Integer.MAX_VALUE;
+      int dist = rsl.getWaypoint().distance(warehouse.getPickArea());
+      return dist * 3 + rsl.getLevel() * 15; // penalize levels even more
   }
 
   private boolean tryAssignSpecificOrder(AeroBot bot, Order order, Set<Integer> currentlyAssigned) {
