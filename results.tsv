@@ -1,1 +1,3 @@
 commit	total_cost	ticks	status	description
+5de2014	64491.0	64491	keep	baseline from mar26_v2
+74d4065	62713.0	62713	keep	global greedy for pick area, sequential for future

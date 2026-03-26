@@ -139,33 +139,31 @@ public class Solution {
     while (!botsWithoutContainer.isEmpty() && !unassignedPick.isEmpty()) {
         AeroBot bestBot = null;
         Order bestOrder = null;
-        Rack.RackStorageLocation bestRsl = null;
-        Container bestContainer = null;
-        int minCharge = Integer.MAX_VALUE;
+        Assignment bestAssign = null;
+        int minCost = Integer.MAX_VALUE;
 
         for (AeroBot bot : botsWithoutContainer) {
             for (Order order : unassignedPick) {
                 Assignment bestForPair = findBestContainerForPair(bot, order);
-                if (bestForPair != null && bestForPair.charge < minCharge) {
-                    minCharge = bestForPair.charge;
+                if (bestForPair != null && bestForPair.ticks < minCost) {
+                    minCost = bestForPair.ticks;
                     bestBot = bot;
                     bestOrder = order;
-                    bestRsl = bestForPair.rsl;
-                    bestContainer = bestForPair.container;
+                    bestAssign = bestForPair;
                 }
             }
         }
 
         if (bestBot != null) {
-            if (bestBot.getCurrentCharge() >= minCharge + 1000) {
+            if (bestBot.getCurrentCharge() >= bestAssign.charge + 1000) {
                 botAssignedOrder.put(bestBot, bestOrder.getSequence());
-                botAssignedContainer.put(bestBot, bestContainer.getCode());
-                botContainerHome.put(bestBot, bestRsl);
+                botAssignedContainer.put(bestBot, bestAssign.container.getCode());
+                botContainerHome.put(bestBot, bestAssign.rsl);
                 currentlyAssigned.add(bestOrder.getSequence());
 
-                bestBot.planMoveToWaypoint(bestRsl.getWaypoint());
-                bestBot.planClimbToLevel(bestRsl.getLevel());
-                bestBot.planLoadContainer(bestContainer);
+                bestBot.planMoveToWaypoint(bestAssign.rsl.getWaypoint());
+                bestBot.planClimbToLevel(bestAssign.rsl.getLevel());
+                bestBot.planLoadContainer(bestAssign.container);
                 bestBot.planClimbToLevel(0);
                 bestBot.planMoveToWaypoint(warehouse.getPickArea());
                 bestBot.planPick(bestOrder);
@@ -197,30 +195,28 @@ public class Solution {
     while (!botsWithoutContainer.isEmpty() && !unassignedFuture.isEmpty()) {
         Order order = unassignedFuture.get(0);
         AeroBot bestBot = null;
-        Rack.RackStorageLocation bestRsl = null;
-        Container bestContainer = null;
-        int minCharge = Integer.MAX_VALUE;
+        Assignment bestAssign = null;
+        int minCost = Integer.MAX_VALUE;
 
         for (AeroBot bot : botsWithoutContainer) {
             Assignment bestForPair = findBestContainerForPair(bot, order);
-            if (bestForPair != null && bestForPair.charge < minCharge) {
-                minCharge = bestForPair.charge;
+            if (bestForPair != null && bestForPair.ticks < minCost) {
+                minCost = bestForPair.ticks;
                 bestBot = bot;
-                bestRsl = bestForPair.rsl;
-                bestContainer = bestForPair.container;
+                bestAssign = bestForPair;
             }
         }
 
         if (bestBot != null) {
-            if (bestBot.getCurrentCharge() >= minCharge + 1000) {
+            if (bestBot.getCurrentCharge() >= bestAssign.charge + 1000) {
                 botAssignedOrder.put(bestBot, order.getSequence());
-                botAssignedContainer.put(bestBot, bestContainer.getCode());
-                botContainerHome.put(bestBot, bestRsl);
+                botAssignedContainer.put(bestBot, bestAssign.container.getCode());
+                botContainerHome.put(bestBot, bestAssign.rsl);
                 currentlyAssigned.add(order.getSequence());
 
-                bestBot.planMoveToWaypoint(bestRsl.getWaypoint());
-                bestBot.planClimbToLevel(bestRsl.getLevel());
-                bestBot.planLoadContainer(bestContainer);
+                bestBot.planMoveToWaypoint(bestAssign.rsl.getWaypoint());
+                bestBot.planClimbToLevel(bestAssign.rsl.getLevel());
+                bestBot.planLoadContainer(bestAssign.container);
                 bestBot.planClimbToLevel(0);
                 bestBot.planMoveToWaypoint(warehouse.getPickArea());
                 bestBot.planPick(order);
@@ -235,12 +231,13 @@ public class Solution {
       Rack.RackStorageLocation rsl;
       Container container;
       int charge;
+      int ticks;
   }
 
   private Assignment findBestContainerForPair(AeroBot bot, Order order) {
       Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
       Assignment best = null;
-      int minCharge = Integer.MAX_VALUE;
+      int minCost = Integer.MAX_VALUE;
 
       for (Container container : containers) {
           if (botAssignedContainer.containsValue(container.getCode())) continue;
@@ -248,13 +245,14 @@ public class Solution {
           Location loc = container.getCurrentLocation();
           if (loc != null && loc.getType() == Location.Type.Rack) {
               Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
-              int charge = estimateFetchPickCharge(bot, rsl, order, container);
-              if (charge < minCharge) {
-                  minCharge = charge;
+              int ticks = estimateFetchPickTicks(bot, rsl, order, container);
+              if (ticks < minCost) {
+                  minCost = ticks;
                   if (best == null) best = new Assignment();
                   best.rsl = rsl;
                   best.container = container;
-                  best.charge = charge;
+                  best.charge = estimateFetchPickCharge(bot, rsl, order, container);
+                  best.ticks = ticks;
               }
           }
       }
@@ -308,7 +306,7 @@ public class Solution {
   private int scoreLocation(Rack.RackStorageLocation rsl) {
       if (rsl == null) return Integer.MAX_VALUE;
       int dist = rsl.getWaypoint().distance(warehouse.getPickArea());
-      return dist * 3 + rsl.getLevel() * 15;
+      return dist * 5 + rsl.getLevel() * 16;
   }
 
   private boolean shouldWait(String productCode) {
@@ -330,5 +328,17 @@ public class Solution {
     charge += warehouse.calculateMoveToWaypoint(rsl.getWaypoint(), warehouse.getPickArea()).charge;
     charge += warehouse.calculatePick(order).charge;
     return charge;
+  }
+
+  private int estimateFetchPickTicks(AeroBot bot, Rack.RackStorageLocation rsl, Order order, Container container) {
+    int ticks = 0;
+    Waypoint botPos = bot.getCurrentWaypoint();
+    ticks += warehouse.calculateMoveToWaypoint(botPos, rsl.getWaypoint()).ticks;
+    ticks += warehouse.calculateClimbToLevel(0, rsl.getLevel()).ticks;
+    ticks += warehouse.calculateLoadContainer(container).ticks;
+    ticks += warehouse.calculateClimbToLevel(rsl.getLevel(), 0).ticks;
+    ticks += warehouse.calculateMoveToWaypoint(rsl.getWaypoint(), warehouse.getPickArea()).ticks;
+    ticks += warehouse.calculatePick(order).ticks;
+    return ticks;
   }
 }
