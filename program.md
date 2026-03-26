@@ -1,115 +1,204 @@
-# autoresearch-mlx
+# KCC14 — Autonomous Warehouse Optimization
 
-This is an Apple Silicon (MLX) port of Karpathy's autoresearch — an experiment to have the LLM do its own research. All training runs natively on MLX with unified memory. No PyTorch or CUDA required.
-
-**Monorepo note:** This project may live inside a larger repo. Always stage only `autoresearch-mlx/` paths. Never use blind `git add -A`.
+This is an experiment to autonomously optimize a Java warehouse simulation (KNAPP Coding Contest 14). 25 AeroBots pick 10,000 orders from a 30×10 rack grid (20 levels each), minimizing total cost.
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+To set up a new experiment:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar26`). The branch `autoresearch/<tag>` must not already exist.
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with header row and baseline entry. Run `uv run train.py` once to establish YOUR baseline on this hardware. Do NOT use baseline numbers from other platforms.
+3. **Read the in-scope files**:
+   - `input/KCC14/src/com/knapp/codingcontest/solution/Solution.java` — **the file you modify**. Your solution logic goes here.
+   - `input/KCC14/src/com/knapp/codingcontest/Main.java` — entry point, prints cost results. **Do not modify.**
+   - `input/KCC14/src/com/knapp/codingcontest/MainCostFactors.java` — cost weights (500/unfinished order, 1/tick). **Do not modify.**
+   - `input/KCC14/src/com/knapp/codingcontest/operations/` — all operation interfaces: `Warehouse.java`, `AeroBot.java`, `PickArea.java`, `ChargingArea.java`, `ParkingArea.java`, `CostFactors.java`, `InfoSnapshot.java`, `Operation.java`. **Do not modify.**
+   - `input/KCC14/src/com/knapp/codingcontest/data/` — data model classes: `Order.java`, `Container.java`, `Rack.java`, `Waypoint.java`, `Location.java`, `Institute.java`. **Do not modify.**
+   - `input/KCC14/src/com/knapp/codingcontest/core/` — internal simulation engine. **Do not modify.**
+   - `input/KCC14/data/warehouse.properties` — warehouse configuration. **Do not modify.**
+   - `input/KCC14/data/order-lines.csv` — 10,000 orders. **Do not modify.**
+   - `input/KCC14/data/product-containers.csv` — 5,100 containers with positions. **Do not modify.**
+   - `eval.sh` — build & run script. **Do not modify.**
+4. **Verify prerequisites**: Check that `java -version` works (use `/opt/homebrew/opt/openjdk/bin/java` if not on PATH). Check that data files exist in `input/KCC14/data/`. If Java is not installed, tell the human.
+5. **Initialize results.tsv**: Create `results.tsv` with the header row. The baseline will be the first run.
 6. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on Apple Silicon via MLX. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+### The Problem
+
+The warehouse has:
+- **25 AeroBots** starting at parking area (0,0)
+- **30×10 rack grid** (300 racks), each with **20 levels** = 6,000 storage locations
+- **5,100 containers** stored across those locations, each holding one product type (unlimited quantity)
+- **10,000 orders** to pick, each requiring one specific product
+- **15 pick stations** at the pick area — only orders currently at pick stations can be picked
+- **10 charging slots** — AeroBots have charge that depletes and must be recharged
+- Costs per tick for operations: MoveH=3 ticks, MoveV=4 ticks/level, Load=2, Store=2, Pick=1, Charge=1/unit-restored, Idle=1
+- Charge costs: MoveH=4/step, MoveV=8/level, Load=2, Store=2, Pick=2, Idle=1, max=20000, charge rate=100/tick
+
+### The AeroBot Workflow
+
+Each bot cycle: **park → move to rack → climb to level → load container → climb down → move to pick area → pick order → move back to rack → climb → store container → climb down → repeat** (with charging when needed).
+
+### Key API Methods
+
+```java
+// Navigation & actions (on AeroBot)
+aeroBot.planMoveToWaypoint(waypoint);   // move horizontally
+aeroBot.planClimbToLevel(level);         // climb up/down at rack
+aeroBot.planLoadContainer(container);    // pick up container from rack
+aeroBot.planPick(order);                 // fulfill order at pick area
+aeroBot.planStoreContainer();            // put container back in rack
+aeroBot.planStartCharge();               // charge at charging area
+
+// Queries (on Warehouse)
+warehouse.findAvailableContainers("productCode");  // find containers for a product
+warehouse.findEmptyRackStorageLocations();          // find empty spots to store
+warehouse.getOpenOrders();                           // remaining orders
+warehouse.getPickArea().getCurrentOrders();          // orders at pick stations now
+warehouse.executeTicksUntilFirstBotToFinish();       // advance simulation
+warehouse.executeOneTick();                          // advance one tick
+
+// Cost estimation (on Warehouse)
+warehouse.calculateMoveToWaypoint(from, to);  // estimate ticks & charge
+warehouse.calculateClimbToLevel(from, to);     // estimate climbing cost
+```
+
+**IMPORTANT**: After planning operations, you MUST call `executeOneTick()` or `executeTicksUntilFirstBotToFinish()` to actually advance the simulation. Operations do NOT execute automatically.
 
 **What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+- Modify `input/KCC14/src/com/knapp/codingcontest/solution/Solution.java` — this is the only file you edit. Everything is fair game: algorithm, data structures, heuristics, bot assignment strategy, order scheduling, charging policy, container reuse.
+- Add any imports from java standard library.
+- Create helper methods, inner classes, data structures — all within Solution.java.
 
 **What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+- Modify any other Java file. All files in `operations/`, `data/`, `core/`, `Main.java`, `MainCostFactors.java` are read-only.
+- Modify `eval.sh`. It is the frozen build/run harness.
+- Modify data files (`warehouse.properties`, CSVs). They are the ground truth.
+- Install new dependencies or packages. Standard Java library only.
 
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+**The goal is simple: get the lowest total_cost.**
 
-**Memory** is a soft constraint. MLX uses unified memory shared between CPU and GPU. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
+```
+total_cost = (unfinished_orders × 500) + (ticks_runtime × 1)
+```
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
+Finishing all 10,000 orders is critical (each unfinished = 500 cost), but doing it in fewer ticks also matters.
 
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome.
+
+**The first run**: Establish baseline first. Note: the empty Solution.java (no `run()` body) will produce cost = 5,000,000 (all orders unfinished). Your first real experiment should implement basic order picking to get a real baseline.
 
 ## Output format
 
-Once the script finishes it prints a summary like this:
+Once the evaluation finishes, `Main.java` prints results like:
+
+```
+  ===================================== : ============ | ======================
+      what                              :       costs  |  (details: count,...)
+  ------------------------------------- : ------------ | ----------------------
+   -> costs/unfinished orders           :      1500.0  |       3
+   -> costs ticks runtime               :      8542.0  |      8542
+  ------------------------------------- : ------------ | ----------------------
+   => TOTAL COST                            10042.0
+                                          ============
+```
+
+The eval.sh script appends parseable metric lines:
 
 ```
 ---
-val_bpb:          2.534000
-training_seconds: 312.4
-total_seconds:    405.7
-peak_vram_mb:     27528.9
-mfu_percent:      0.00
-total_tokens_M:   39.8
-num_steps:        46
-num_params_M:     50.3
-depth:            8
+total_cost: 10042.0
+ticks: 8542
+unfinished_orders: 3
 ```
 
-Note that the script runs for a fixed 5-minute training budget. On Apple Silicon the throughput, step count, and absolute val_bpb will differ from NVIDIA results — that's expected. Compare only against your own baseline on the same hardware.
+Extract the key metric:
 
 ```
-grep "^val_bpb:" run.log
+grep "^total_cost:" run.log
 ```
 
 ## Logging results
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
+When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated).
 
 The TSV has a header row and 5 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	total_cost	ticks	status	description
 ```
 
 1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
+2. total_cost achieved (e.g. 10042.0) — use 0.0 for crashes
+3. ticks runtime (integer) — use 0 for crashes
 4. status: `keep`, `discard`, or `crash`
 5. short text description of what this experiment tried
 
 Example:
 
 ```
-commit	val_bpb	memory_gb	status	description
-383abb4	2.667000	26.9	keep	baseline
-909dd59	2.588904	26.9	keep	halve total batch size to 2^16
-4161af3	2.533728	26.9	keep	increase matrix LR to 0.04
+commit	total_cost	ticks	status	description
+a1b2c3d	5000000.0	0	keep	baseline (empty solution)
+b2c3d4e	152340.0	42340	keep	basic greedy order picking
+c3d4e5f	165000.0	45000	discard	randomized bot assignment
+d4e5f6g	0.0	0	crash	null pointer in order scheduling
 ```
 
 ## The experiment loop
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+The experiment runs on a dedicated branch (e.g. `autoresearch/mar26`).
 
 LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. `git add autoresearch-mlx/train.py && git commit -m "experiment: <description>"` (never `git add -A` — this may be inside a larger repo)
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv
-8. If val_bpb improved (lower), `git add autoresearch-mlx/results.tsv && git commit --amend --no-edit` to include the log, advancing the branch
-9. If val_bpb is equal or worse, record the discard commit hash, then `git reset --hard <previous kept commit>` to discard it cleanly
+2. Modify `input/KCC14/src/com/knapp/codingcontest/solution/Solution.java` with an experimental idea.
+3. `git add input/KCC14/src/com/knapp/codingcontest/solution/Solution.java && git commit -m "experiment: <description>"`
+4. Run the experiment: `bash eval.sh > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
+5. Read out the results: `grep "^total_cost:\|TOTAL COST" run.log`
+6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Java stack trace and attempt a fix.
+7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
+8. If total_cost improved (lower), you "advance" the branch, keeping the git commit
+9. If total_cost is equal or worse, record the discard commit hash, then `git reset --hard <previous kept commit>` to discard it cleanly
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+**Timeout**: Each experiment should take ~30-60 seconds (compile + run). If a run exceeds 5 minutes, kill it and treat as failure.
 
-**Timeout**: Each experiment should take ~7 minutes total (5 min training + ~1 min compile/eval overhead on Apple Silicon). If a run exceeds 15 minutes, kill it and treat it as a failure (discard and revert).
+**Crashes**: If a run crashes (compilation error, NullPointerException, etc.), use your judgment: If it's something dumb and easy to fix (typo, missing import, wrong method call), fix it and re-run. If the idea is fundamentally broken, skip it, log "crash", and move on.
 
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the API files for new methods, try combining previous near-misses, try radically different strategies. The loop runs until the human interrupts you, period.
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
+## Strategy hints
 
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~7 minutes then you can run approx 8-9/hour, for a total of about 70 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+### Phase 1: Get a working solution
+- Start with a simple greedy approach: for each available order at pick stations, find the nearest available container, assign a bot to fetch it
+- Use `warehouse.executeTicksUntilFirstBotToFinish()` to advance simulation efficiently
+- Handle the `getParticipantName()` and `getParticipantInstitution()` stubs first (they throw if null)
+
+### Phase 2: Optimize order scheduling
+- Not all orders are at pick stations simultaneously (only 15 at a time). Plan which containers to pre-fetch
+- Match bots to the closest containers for efficiency (minimize travel distance)
+- Consider which orders are coming next and pre-position containers near the pick area
+
+### Phase 3: Optimize logistics
+- **Charging strategy**: Don't let bots run out of charge. Plan charging proactively when charge gets low
+- **Container reuse**: If the same product is needed multiple times, keep the container loaded or store it close to pick area
+- **Parallel bot usage**: Coordinate all 25 bots to work concurrently, not sequentially
+- **Rack proximity**: Prefer containers closer to the pick area (shorter travel = fewer ticks)
+- **Multi-bot coordination**: Avoid rack conflicts (only one bot can climb a rack at a time)
+
+### Phase 4: Advanced optimizations
+- Batch order planning: queue multiple fetch-pick cycles per bot before executing
+- Near-pick-area storage: store frequently-used containers in racks near the pick area
+- Dynamic bot allocation: idle bots pre-fetch containers for upcoming orders
+- Minimize climb distance: prefer lower-level containers (MoveV costs 4 ticks/level vs MoveH costs 3 ticks/step)
+- Calculate cost estimates with `warehouse.calculateMoveToWaypoint()` etc. to choose optimal assignments
+
+### Warehouse layout reference
+- Parking: (0,0)
+- Charging: origin (2,5), 10 slots
+- Pick area: origin (5,2), 15 stations
+- Racks: origin (5,5), grid 30×10, offset 1×1 — so racks span roughly from (5,5) to (35,15)
+- Each rack has 20 levels
