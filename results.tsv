@@ -1,1 +1,8 @@
 commit	total_cost	ticks	status	description
+a29387a	5000000.0	0	keep	baseline (empty solution)
+5fa7f6a	137129.0	137129	keep	basic greedy picking solution
+3cab297	130790.0	130790	keep	priority parallel greedy
+12d668b	120683.0	120683	keep	priority parallel with reuse
+0c8572b	76764.0	76764	keep	cheapest container selection
+127128f	65032.0	65032	keep	optimized storage location selection
+9709da7	64491.0	64491	keep	sequential greedy matching
