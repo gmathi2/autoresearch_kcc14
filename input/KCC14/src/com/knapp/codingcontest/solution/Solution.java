@@ -87,9 +87,10 @@ public class Solution {
     Set<Integer> currentlyAssigned = new HashSet<>(botAssignedOrder.values());
     List<Order> candidates = getCandidates(currentlyAssigned);
 
-    // 2. Handle idle bots
+    // 2. Separate bots with containers and without
+    List<AeroBot> botsWithContainer = new ArrayList<>();
+    List<AeroBot> botsWithoutContainer = new ArrayList<>();
     for (AeroBot bot : idleBots) {
-        // Charging
         if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.3) {
             if (bot.getCurrentContainer() != null) {
                 planStore(bot);
@@ -100,40 +101,105 @@ public class Solution {
             continue;
         }
 
-        // Reuse?
-        Container current = bot.getCurrentContainer();
-        if (current != null) {
-            Order matched = null;
-            for (Order o : candidates) {
-                if (o.getProductCode().equals(current.getProductCode()) && !currentlyAssigned.contains(o.getSequence())) {
-                    matched = o;
-                    break;
-                }
-            }
-            if (matched != null) {
-                botAssignedOrder.put(bot, matched.getSequence());
-                currentlyAssigned.add(matched.getSequence());
-                bot.planPick(matched);
-                continue;
-            } else if (!shouldWait(current.getProductCode())) {
-                planStore(bot);
-                // After storing, bot will be idle next call
-                continue;
-            } else {
-                // Wait at pick area (or wherever we are)
-                continue;
-            }
+        if (bot.getCurrentContainer() != null) {
+            botsWithContainer.add(bot);
+        } else {
+            botsWithoutContainer.add(bot);
         }
+    }
 
-        // Assign new
-        for (Order order : candidates) {
-            if (currentlyAssigned.contains(order.getSequence())) continue;
-            
-            if (tryAssignSpecificOrder(bot, order, currentlyAssigned)) {
+    // 3. Match bots with containers FIRST (reuse)
+    for (AeroBot bot : botsWithContainer) {
+        Container current = bot.getCurrentContainer();
+        Order matched = null;
+        for (Order o : candidates) {
+            if (o.getProductCode().equals(current.getProductCode()) && !currentlyAssigned.contains(o.getSequence())) {
+                matched = o;
                 break;
             }
         }
+        if (matched != null) {
+            botAssignedOrder.put(bot, matched.getSequence());
+            currentlyAssigned.add(matched.getSequence());
+            bot.planPick(matched);
+        } else if (!shouldWait(current.getProductCode())) {
+            planStore(bot);
+        }
     }
+
+    // 4. Sequential greedy matching for bots without containers
+    List<Order> unassigned = new ArrayList<>();
+    for (Order o : candidates) {
+        if (!currentlyAssigned.contains(o.getSequence())) {
+            unassigned.add(o);
+        }
+    }
+
+    while (!botsWithoutContainer.isEmpty() && !unassigned.isEmpty()) {
+        Order order = unassigned.get(0);
+        AeroBot bestBot = null;
+        Rack.RackStorageLocation bestRsl = null;
+        Container bestContainer = null;
+        int minCharge = Integer.MAX_VALUE;
+
+        for (AeroBot bot : botsWithoutContainer) {
+            Assignment bestForPair = findBestContainerForPair(bot, order);
+            if (bestForPair != null && bestForPair.charge < minCharge) {
+                minCharge = bestForPair.charge;
+                bestBot = bot;
+                bestRsl = bestForPair.rsl;
+                bestContainer = bestForPair.container;
+            }
+        }
+
+        if (bestBot != null) {
+            if (bestBot.getCurrentCharge() >= minCharge + 1000) {
+                botAssignedOrder.put(bestBot, order.getSequence());
+                botAssignedContainer.put(bestBot, bestContainer.getCode());
+                botContainerHome.put(bestBot, bestRsl);
+                currentlyAssigned.add(order.getSequence());
+
+                bestBot.planMoveToWaypoint(bestRsl.getWaypoint());
+                bestBot.planClimbToLevel(bestRsl.getLevel());
+                bestBot.planLoadContainer(bestContainer);
+                bestBot.planClimbToLevel(0);
+                bestBot.planMoveToWaypoint(warehouse.getPickArea());
+                bestBot.planPick(order);
+            }
+            botsWithoutContainer.remove(bestBot);
+        }
+        unassigned.remove(0);
+    }
+  }
+
+  private static class Assignment {
+      Rack.RackStorageLocation rsl;
+      Container container;
+      int charge;
+  }
+
+  private Assignment findBestContainerForPair(AeroBot bot, Order order) {
+      Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
+      Assignment best = null;
+      int minCharge = Integer.MAX_VALUE;
+
+      for (Container container : containers) {
+          if (botAssignedContainer.containsValue(container.getCode())) continue;
+
+          Location loc = container.getCurrentLocation();
+          if (loc != null && loc.getType() == Location.Type.Rack) {
+              Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
+              int charge = estimateFetchPickCharge(bot, rsl, order, container);
+              if (charge < minCharge) {
+                  minCharge = charge;
+                  if (best == null) best = new Assignment();
+                  best.rsl = rsl;
+                  best.container = container;
+                  best.charge = charge;
+              }
+          }
+      }
+      return best;
   }
 
   private List<Order> getCandidates(Set<Integer> currentlyAssigned) {
@@ -159,8 +225,6 @@ public class Solution {
     int bestScore = Integer.MAX_VALUE;
 
     for (Rack.RackStorageLocation rsl : empty) {
-        // Even if the API says empty, we should still check our local turn reservations
-        // and also double check with isReserved.
         if (currentTurnStoreReservationCodes.contains(rsl.getCode()) || warehouse.isReserved(rsl)) {
             continue;
         }
@@ -185,48 +249,7 @@ public class Solution {
   private int scoreLocation(Rack.RackStorageLocation rsl) {
       if (rsl == null) return Integer.MAX_VALUE;
       int dist = rsl.getWaypoint().distance(warehouse.getPickArea());
-      return dist * 3 + rsl.getLevel() * 15; // penalize levels even more
-  }
-
-  private boolean tryAssignSpecificOrder(AeroBot bot, Order order, Set<Integer> currentlyAssigned) {
-    Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
-    Rack.RackStorageLocation bestRsl = null;
-    Container bestContainer = null;
-    int minCharge = Integer.MAX_VALUE;
-
-    for (Container container : containers) {
-      if (botAssignedContainer.containsValue(container.getCode())) continue;
-
-      Location loc = container.getCurrentLocation();
-      if (loc != null && loc.getType() == Location.Type.Rack) {
-        Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
-
-        int estimatedCharge = estimateFetchPickCharge(bot, rsl, order, container);
-        if (estimatedCharge < minCharge) {
-            minCharge = estimatedCharge;
-            bestRsl = rsl;
-            bestContainer = container;
-        }
-      }
-    }
-
-    if (bestContainer != null) {
-        if (bot.getCurrentCharge() < minCharge + 1000) return false;
-
-        botAssignedOrder.put(bot, order.getSequence());
-        botAssignedContainer.put(bot, bestContainer.getCode());
-        botContainerHome.put(bot, bestRsl);
-        currentlyAssigned.add(order.getSequence());
-
-        bot.planMoveToWaypoint(bestRsl.getWaypoint());
-        bot.planClimbToLevel(bestRsl.getLevel());
-        bot.planLoadContainer(bestContainer);
-        bot.planClimbToLevel(0);
-        bot.planMoveToWaypoint(warehouse.getPickArea());
-        bot.planPick(order);
-        return true;
-    }
-    return false;
+      return dist * 3 + rsl.getLevel() * 15;
   }
 
   private boolean shouldWait(String productCode) {
