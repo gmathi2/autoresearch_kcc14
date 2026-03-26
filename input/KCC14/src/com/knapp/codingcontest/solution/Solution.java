@@ -15,20 +15,17 @@
 package com.knapp.codingcontest.solution;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
-import java.util.logging.Level;
+import java.util.Map;
 
 import com.knapp.codingcontest.data.Container;
 import com.knapp.codingcontest.data.Institute;
+import com.knapp.codingcontest.data.Location;
 import com.knapp.codingcontest.data.Order;
 import com.knapp.codingcontest.data.Rack;
 import com.knapp.codingcontest.data.Waypoint;
 import com.knapp.codingcontest.operations.AeroBot;
-import com.knapp.codingcontest.operations.AeroBotVisualizer;
-import com.knapp.codingcontest.operations.ChargingArea;
-import com.knapp.codingcontest.operations.InfoSnapshot;
-import com.knapp.codingcontest.operations.ParkingArea;
-import com.knapp.codingcontest.operations.PickArea;
 import com.knapp.codingcontest.operations.Warehouse;
 
 /**
@@ -46,134 +43,122 @@ public class Solution {
   // ----------------------------------------------------------------------------
 
   protected final Warehouse warehouse;
+  
+  private final Map<AeroBot, Integer> botAssignedOrder = new HashMap<>();
+  private final Map<AeroBot, String> botAssignedContainer = new HashMap<>();
 
   // ----------------------------------------------------------------------------
 
   public Solution(final Warehouse warehouse) {
-    // TODO: prepare data structures (may also be done in run() method below)
     this.warehouse = warehouse;
-    if (getParticipantName() == null) {
-      throw new IllegalArgumentException("let getParticipantName() return your name");
-    }
-    if (getParticipantInstitution() == null) {
-      throw new IllegalArgumentException("let getParticipantInstitution() return yout institution");
-    }
   }
 
   // ----------------------------------------------------------------------------
 
   /**
    * The main entry-point.
-   *
    */
   public void run() throws Exception {
-    // TODO: make calls to API (see below)
+    while (!warehouse.areAllOrdersFinished()) {
+      assignTasks();
+      warehouse.executeTicksUntilFirstBotToFinish();
+      
+      if (allBotsIdle() && !warehouse.areAllOrdersFinished()) {
+          warehouse.executeOneTick();
+      }
+    }
   }
 
-  // ----------------------------------------------------------------------------
-  // ----------------------------------------------------------------------------
-
-  /**
-   * Just for documentation purposes.
-   *
-   * this method may be removed without any side-effects
-   *   divided into these sections
-   *
-   *     <li><em>input methods</em>
-   *
-   *     <li><em>main interaction methods</em>
-   *         - these methods are the ones that make (explicit) changes to the warehouse
-   *
-   *     <li><em>information</em>
-   *         - information you might need for your solution
-   *
-   *     <li><em>additional information</em>
-   *         - various other infos: statistics, information about (current) costs, ...
-   *
-   */
-  @SuppressWarnings({ "unused", "null" })
-  private void apis() throws Exception {
-    final AeroBot aeroBot = null;
-    final Waypoint waypoint = null;
-    final int level = 0;
-    final Container container = null;
-    final Order order = null;
-
-    // ----- input -----
-
-    final Collection<Container> ac = warehouse.getAllContainers();
-    final List<Order> ao = warehouse.getAllOrders();
-    final Collection<Rack> ar = warehouse.getAllRacks();
-
-    // ----- main interaction methods -----
-
-    aeroBot.planMoveToWaypoint(waypoint);
-    aeroBot.planClimbToLevel(level);
-    aeroBot.planLoadContainer(container);
-    aeroBot.planPick(order);
-    aeroBot.planStoreContainer();
-    aeroBot.planStartCharge();
-
-    // ----- information -----
-
-    final ParkingArea parking = warehouse.getParkingArea();
-    final ChargingArea charging = warehouse.getChargingArea();
-    final PickArea picking = warehouse.getPickArea();
-    final Collection<AeroBot> aeroBots = warehouse.getAllAeroBots();
-
-    final Collection<Container> acs = warehouse.findAvailableContainers("productCode");
-    final Collection<Rack.RackStorageLocation> ersls = warehouse.findEmptyRackStorageLocations();
-
-    final List<Order> openOrders = warehouse.getOpenOrders();
-    final boolean allFinished = warehouse.areAllOrdersFinished();
-
-    // ----- additional information -----
-
-    final Collection<AeroBot> pabs = parking.getParkingAeroBots();
-
-    final int cs = charging.getChargingSlots();
-    final int fcs = charging.getFreeChargingSlots();
-    charging.hasFreeChargingSlot();
-
-    final List<Order> porders = picking.getCurrentOrders();
-
-    final InfoSnapshot info = warehouse.getInfoSnapshot();
-
-    //
-    final int uo = info.getUnfinishedOrderCount();
-    final int t = info.getTicksRuntime();
-
-    // Park, MoveH, MoveV, Load, Pick, Store, Charge, _Idle_
-    final InfoSnapshot.AeroBotStatistics abstat = info.getAeroBotStatistics(aeroBot);
-    final InfoSnapshot.AeroBotStatistics.ModeStatistics abms = abstat.getModeStatistics(AeroBot.OperationMode._Idle_);
-    final InfoSnapshot.AeroBotStatistics.ModeStatistics ms = info.getModeStatistics(AeroBot.OperationMode._Idle_);
-    ms.get_count();
-    ms.get_tick_units();
-    ms.get_ticks();
-
-    //
-    final double c_uo = info.getUnfinishedOrdersCost();
-    final double c_t = info.getTicksCost();
-    final double c_T = info.getTotalCost();
-
-    // optional logging (SEVERE, WARNING, INFO, CONFIG, FINE, FINER, FINEST)
-    // if used you may adjust some attributes below ...
-    warehouse.log(Level.FINEST, "finest");
-
-    final AeroBotVisualizer v = warehouse.getVisualizer();
-    final String filename = null;
-    v.generateHTML(filename);
-    v.getConflictCount();
-    v.getFirstConflictTick();
+  private boolean allBotsIdle() {
+    for (AeroBot bot : warehouse.getAllAeroBots()) {
+      if (!bot.getOpenOperations().isEmpty()) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  static {
-    // TODO: you may change logging (target: file or console/stderr, level) - you may turn it 'OFF'
-    //System.setProperty("initLogging", "solution.log"); // default: 'console' (stdout); use file instead of console
-    //System.setProperty("logTarget", "stderr"); // default: stdout (only considered with initLogging=console)
-    //System.setProperty("logLevel", "FINE"); // default: INFO (OFF, SEVERE, WARNING, INFO, CONFIG, FINE, FINER, FINEST, ALL)
+  private void assignTasks() {
+    for (AeroBot bot : warehouse.getAllAeroBots()) {
+      if (bot.getOpenOperations().isEmpty()) {
+        botAssignedOrder.remove(bot);
+        botAssignedContainer.remove(bot);
 
-    // System.setProperty("useVisualizer", "false"); // uncomment to disable data-collection for visualization
+        // Simple low-charge policy: if below 30%, always charge
+        if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.30) {
+          planCharge(bot);
+          continue;
+        }
+
+        tryAssignOrder(bot);
+      }
+    }
+  }
+
+  private void planCharge(AeroBot bot) {
+    bot.planMoveToWaypoint(warehouse.getChargingArea());
+    bot.planStartCharge();
+  }
+
+  private void tryAssignOrder(AeroBot bot) {
+    List<Order> currentOrders = warehouse.getPickArea().getCurrentOrders();
+    for (Order order : currentOrders) {
+      if (botAssignedOrder.containsValue(order.getSequence())) {
+        continue;
+      }
+
+      Collection<Container> containers = warehouse.findAvailableContainers(order.getProductCode());
+      for (Container container : containers) {
+        if (botAssignedContainer.containsValue(container.getCode())) {
+          continue;
+        }
+
+        Location loc = container.getCurrentLocation();
+        if (loc != null && loc.getType() == Location.Type.Rack) {
+          Rack.RackStorageLocation rsl = (Rack.RackStorageLocation) loc;
+
+          // Check if we have enough charge for the WHOLE cycle plus a safety margin
+          int estimatedCharge = estimateCycleCharge(bot, rsl, order, container);
+          if (bot.getCurrentCharge() < estimatedCharge + 1000) {
+            // Not enough charge for this specific cycle, better go charge now
+            planCharge(bot);
+            return;
+          }
+
+          botAssignedOrder.put(bot, order.getSequence());
+          botAssignedContainer.put(bot, container.getCode());
+
+          // Cycle: Move -> Climb -> Load -> ClimbDown -> MovePick -> Pick -> MoveRack -> Climb -> Store -> ClimbDown
+          bot.planMoveToWaypoint(rsl.getWaypoint());
+          bot.planClimbToLevel(rsl.getLevel());
+          bot.planLoadContainer(container);
+          bot.planClimbToLevel(0);
+          bot.planMoveToWaypoint(warehouse.getPickArea());
+          bot.planPick(order);
+          bot.planMoveToWaypoint(rsl.getWaypoint());
+          bot.planClimbToLevel(rsl.getLevel());
+          bot.planStoreContainer();
+          bot.planClimbToLevel(0);
+          return;
+        }
+      }
+    }
+  }
+
+  private int estimateCycleCharge(AeroBot bot, Rack.RackStorageLocation rsl, Order order, Container container) {
+    int charge = 0;
+    Waypoint botPos = bot.getCurrentWaypoint();
+    charge += warehouse.calculateMoveToWaypoint(botPos, rsl.getWaypoint()).charge;
+    charge += warehouse.calculateClimbToLevel(0, rsl.getLevel()).charge;
+    charge += warehouse.calculateLoadContainer(container).charge;
+    charge += warehouse.calculateClimbToLevel(rsl.getLevel(), 0).charge;
+    charge += warehouse.calculateMoveToWaypoint(rsl.getWaypoint(), warehouse.getPickArea()).charge;
+    charge += warehouse.calculatePick(order).charge;
+    charge += warehouse.calculateMoveToWaypoint(warehouse.getPickArea(), rsl.getWaypoint()).charge;
+    charge += warehouse.calculateClimbToLevel(0, rsl.getLevel()).charge;
+    charge += warehouse.calculateStoreContainer().charge;
+    charge += warehouse.calculateClimbToLevel(rsl.getLevel(), 0).charge;
+    return charge;
   }
 
   // ----------------------------------------------------------------------------
