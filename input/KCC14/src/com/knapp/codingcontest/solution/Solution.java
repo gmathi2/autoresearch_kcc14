@@ -200,7 +200,7 @@ public class Solution {
         pickAreaSeqs.add(o.getSequence());
     }
     for (Order o : openOrders) {
-        if (prefetchOrders.size() >= 30) break;
+        if (prefetchOrders.size() >= 20) break;
         if (currentlyAssigned.contains(o.getSequence())) continue;
         if (pickAreaSeqs.contains(o.getSequence())) continue;
         prefetchOrders.add(o);
