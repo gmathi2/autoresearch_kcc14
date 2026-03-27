@@ -161,7 +161,7 @@ public class Solution {
         }
 
         if (bestBot != null) {
-            if (bestBot.getCurrentCharge() >= bestAssign.charge + 1000) {
+            if (bestBot.getCurrentCharge() >= bestAssign.charge + 500) {
                 botAssignedOrder.put(bestBot, bestOrder.getSequence());
                 botAssignedContainer.put(bestBot, bestAssign.container.getCode());
                 botContainerHome.put(bestBot, bestAssign.rsl);
@@ -214,7 +214,7 @@ public class Solution {
         }
 
         if (bestBot != null) {
-            if (bestBot.getCurrentCharge() >= bestAssign.charge + 1000) {
+            if (bestBot.getCurrentCharge() >= bestAssign.charge + 500) {
                 botAssignedOrder.put(bestBot, order.getSequence());
                 botAssignedContainer.put(bestBot, bestAssign.container.getCode());
                 botContainerHome.put(bestBot, bestAssign.rsl);
