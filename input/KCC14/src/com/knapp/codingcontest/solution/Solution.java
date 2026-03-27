@@ -333,7 +333,7 @@ public class Solution {
 
   private boolean shouldWait(String productCode) {
     List<Order> open = warehouse.getOpenOrders();
-    int limit = Math.min(open.size(), 50);
+    int limit = Math.min(open.size(), 15);
     for (int i = 0; i < limit; i++) {
         if (open.get(i).getProductCode().equals(productCode)) return true;
     }
