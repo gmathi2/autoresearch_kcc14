@@ -29,6 +29,7 @@ import com.knapp.codingcontest.data.Order;
 import com.knapp.codingcontest.data.Rack;
 import com.knapp.codingcontest.data.Waypoint;
 import com.knapp.codingcontest.operations.AeroBot;
+import com.knapp.codingcontest.operations.InfoSnapshot;
 import com.knapp.codingcontest.operations.Warehouse;
 
 public class Solution {
@@ -60,6 +61,11 @@ public class Solution {
           warehouse.executeOneTick();
       }
     }
+    InfoSnapshot info = warehouse.getInfoSnapshot();
+    System.out.println("---SOLUTION-RESULTS---");
+    System.out.println("total_cost: " + info.getTotalCost());
+    System.out.println("ticks: " + info.getTicksRuntime());
+    System.out.println("unfinished_orders: " + info.getUnfinishedOrderCount());
   }
 
   private boolean allBotsIdle() {
@@ -311,7 +317,7 @@ public class Solution {
 
   private boolean shouldWait(String productCode) {
     List<Order> open = warehouse.getOpenOrders();
-    int limit = Math.min(open.size(), 30); // only wait if needed very soon
+    int limit = Math.min(open.size(), 50);
     for (int i = 0; i < limit; i++) {
         if (open.get(i).getProductCode().equals(productCode)) return true;
     }
