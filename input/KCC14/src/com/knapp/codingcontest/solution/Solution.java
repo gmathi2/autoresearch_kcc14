@@ -79,7 +79,7 @@ public class Solution {
 
   private void assignTasks() {
     currentTurnStoreReservationCodes.clear();
-    // 1. Identify idle bots and candidates
+    // 1. Identify idle bots
     List<AeroBot> idleBots = new ArrayList<>();
     for (AeroBot bot : warehouse.getAllAeroBots()) {
         if (bot.getOpenOperations().isEmpty()) {
@@ -91,9 +91,8 @@ public class Solution {
     if (idleBots.isEmpty()) return;
 
     Set<Integer> currentlyAssigned = new HashSet<>(botAssignedOrder.values());
-    List<Order> candidates = getCandidates(currentlyAssigned);
 
-    // 2. Separate bots with containers and without
+    // 2. Separate bots by charge and container state
     List<AeroBot> botsWithContainer = new ArrayList<>();
     List<AeroBot> botsWithoutContainer = new ArrayList<>();
     for (AeroBot bot : idleBots) {
@@ -114,7 +113,9 @@ public class Solution {
         }
     }
 
-    // 3. Match bots with containers FIRST (reuse)
+    // 3. Match bots with containers FIRST (reuse) against ALL open orders
+    // Use candidates = pick area + next open orders for reuse matching
+    List<Order> candidates = getCandidates(currentlyAssigned);
     for (AeroBot bot : botsWithContainer) {
         Container current = bot.getCurrentContainer();
         Order matched = null;
@@ -133,8 +134,7 @@ public class Solution {
         }
     }
 
-    // 4. Match bots without containers
-    // First, globally greedy for pick area orders
+    // 4. Bots without containers — serve pick area orders (globally greedy)
     List<Order> unassignedPick = new ArrayList<>();
     for (Order o : warehouse.getPickArea().getCurrentOrders()) {
         if (!currentlyAssigned.contains(o.getSequence())) {
@@ -177,29 +177,37 @@ public class Solution {
             botsWithoutContainer.remove(bestBot);
             unassignedPick.remove(bestOrder);
         } else {
-            break; // No more possible assignments
+            break;
         }
     }
 
-    // Then, sequential greedy matching for future orders
-    List<Order> unassignedFuture = new ArrayList<>();
-    for (Order o : candidates) {
-        if (!currentlyAssigned.contains(o.getSequence())) {
-            // only add if not already handled
-            boolean isPickArea = false;
-            for (Order po : warehouse.getPickArea().getCurrentOrders()) {
-                if (po.getSequence().equals(o.getSequence())) {
-                    isPickArea = true; break;
-                }
-            }
-            if (!isPickArea) {
-                unassignedFuture.add(o);
+    // 5. Pre-fetch: look at next open orders beyond what's at pick area
+    //    Only pre-fetch for orders whose product isn't already being fetched
+    Set<String> productsInProgress = new HashSet<>();
+    for (String c : botAssignedContainer.values()) {
+        // find the product for this container
+        for (AeroBot bot : warehouse.getAllAeroBots()) {
+            if (bot.getCurrentContainer() != null && bot.getCurrentContainer().getCode().equals(c)) {
+                productsInProgress.add(bot.getCurrentContainer().getProductCode());
             }
         }
     }
 
-    while (!botsWithoutContainer.isEmpty() && !unassignedFuture.isEmpty()) {
-        Order order = unassignedFuture.get(0);
+    List<Order> prefetchOrders = new ArrayList<>();
+    List<Order> openOrders = warehouse.getOpenOrders();
+    Set<Integer> pickAreaSeqs = new HashSet<>();
+    for (Order o : warehouse.getPickArea().getCurrentOrders()) {
+        pickAreaSeqs.add(o.getSequence());
+    }
+    for (Order o : openOrders) {
+        if (prefetchOrders.size() >= 30) break;
+        if (currentlyAssigned.contains(o.getSequence())) continue;
+        if (pickAreaSeqs.contains(o.getSequence())) continue;
+        prefetchOrders.add(o);
+    }
+
+    while (!botsWithoutContainer.isEmpty() && !prefetchOrders.isEmpty()) {
+        Order order = prefetchOrders.get(0);
         AeroBot bestBot = null;
         Assignment bestAssign = null;
         int minCost = Integer.MAX_VALUE;
@@ -229,10 +237,10 @@ public class Solution {
             }
             botsWithoutContainer.remove(bestBot);
         }
-        unassignedFuture.remove(0);
+        prefetchOrders.remove(0);
     }
 
-    // Proactively charge idle bots if below 70%
+    // 6. Proactively charge remaining idle bots if below 70%
     for (AeroBot bot : botsWithoutContainer) {
         if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.7) {
             bot.planMoveToWaypoint(warehouse.getChargingArea());
