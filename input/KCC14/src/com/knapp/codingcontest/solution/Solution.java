@@ -231,6 +231,14 @@ public class Solution {
         }
         unassignedFuture.remove(0);
     }
+
+    // Proactively charge idle bots if below 70%
+    for (AeroBot bot : botsWithoutContainer) {
+        if (bot.getCurrentCharge() < bot.getMaxCharge() * 0.7) {
+            bot.planMoveToWaypoint(warehouse.getChargingArea());
+            bot.planStartCharge();
+        }
+    }
   }
 
   private static class Assignment {
