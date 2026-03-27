@@ -207,37 +207,42 @@ public class Solution {
     }
 
     while (!botsWithoutContainer.isEmpty() && !prefetchOrders.isEmpty()) {
-        Order order = prefetchOrders.get(0);
         AeroBot bestBot = null;
+        Order bestOrder = null;
         Assignment bestAssign = null;
         int minCost = Integer.MAX_VALUE;
 
         for (AeroBot bot : botsWithoutContainer) {
-            Assignment bestForPair = findBestContainerForPair(bot, order);
-            if (bestForPair != null && bestForPair.ticks < minCost) {
-                minCost = bestForPair.ticks;
-                bestBot = bot;
-                bestAssign = bestForPair;
+            for (Order order : prefetchOrders) {
+                Assignment bestForPair = findBestContainerForPair(bot, order);
+                if (bestForPair != null && bestForPair.ticks < minCost) {
+                    minCost = bestForPair.ticks;
+                    bestBot = bot;
+                    bestOrder = order;
+                    bestAssign = bestForPair;
+                }
             }
         }
 
         if (bestBot != null) {
             if (bestBot.getCurrentCharge() >= bestAssign.charge + 500) {
-                botAssignedOrder.put(bestBot, order.getSequence());
+                botAssignedOrder.put(bestBot, bestOrder.getSequence());
                 botAssignedContainer.put(bestBot, bestAssign.container.getCode());
                 botContainerHome.put(bestBot, bestAssign.rsl);
-                currentlyAssigned.add(order.getSequence());
+                currentlyAssigned.add(bestOrder.getSequence());
 
                 bestBot.planMoveToWaypoint(bestAssign.rsl.getWaypoint());
                 bestBot.planClimbToLevel(bestAssign.rsl.getLevel());
                 bestBot.planLoadContainer(bestAssign.container);
                 bestBot.planClimbToLevel(0);
                 bestBot.planMoveToWaypoint(warehouse.getPickArea());
-                bestBot.planPick(order);
+                bestBot.planPick(bestOrder);
             }
             botsWithoutContainer.remove(bestBot);
+            prefetchOrders.remove(bestOrder);
+        } else {
+            break;
         }
-        prefetchOrders.remove(0);
     }
 
     // 6. Proactively charge remaining idle bots if below 70%
