@@ -1,3 +1,37 @@
 commit	total_cost	ticks	status	description
-5de2014	64491.0	64491	keep	baseline from mar26_v2
+5de2014	64491.0	64491	baseline	baseline from mar26_v2
 74d4065	62713.0	62713	keep	global greedy for pick area, sequential for future
+0958993	61506.0	61506	keep	optimize for ticks instead of charge & better store heuristic
+ba4b1d6	76265.0	76265	discard	lower charge threshold 20%, lookahead 75, smart store with demand tracking
+ccb22b3	61420.0	61420	keep	increase shouldWait limit from 30 to 50
+403baa6	62548.0	62548	discard	increase candidate lookahead from 50 to 75
+2b0a692	61691.0	61691	discard	reduce candidate lookahead from 50 to 30
+06c35e0	61719.0	61719	discard	adjust store scoring to dist*3 + level*12
+a919ce3	61679.0	61679	discard	aggressive store scoring dist*8 + level*24
+a7981dd	61420.0	61420	keep	reduce charge buffer from 1000 to 500
+5b43d2c	61420.0	61420	keep	proactively charge idle bots below 70%
+6b55d4f	61796.0	61796	discard	global greedy matching for future orders too
+009be9c	62866.0	62866	discard	add estimated store-back cost to tick estimate
+bbbacca	79100.0	79100	discard	move bot to pick area after storing container
+abfd554	61829.0	61829	discard	score store by actual travel cost from bot position
+228ba6e	61829.0	61829	discard	hybrid store scoring (bot travel + pick proximity)
+4fee343	61440.0	61440	discard	disable future order pre-fetching
+a372ac2	62287.0	62287	discard	only reuse containers for pick area orders (not future)
+1ebd17b	63685.0	63685	discard	10-tick increments instead of executeTicksUntilFirstBotToFinish
+b9db9a0	61634.0	61634	discard	prioritize pick orders for products not held by bots
+ce45faf	61574.0	61574	discard	chain store + charge operations
+9436cca	61597.0	61597	discard	lower charge threshold from 30% to 25%
+22a7f72	61828.0	61828	discard	reuse bonus 5 ticks/remaining order in matching
+8b014bf	61889.0	61889	discard	staging strategy with dedup and pick-area-first reuse
+bf6c4d4	61420.0	61420	keep	cleaner prefetch code with explicit pick/future separation (refactor, no change)
+88dfa86	61233.0	61233	keep	reduce shouldWait from 50 to 15 — 36% idle reduction via diagnostics
+52b28b6	61157.0	61157	keep	globally greedy future prefetch (now works with lower shouldWait)
+7b249f6	60523.0	60523	keep	reduce prefetch lookahead from 30 to 20 — sweet spot for bots vs lookahead
+-	73438.0	73438	discard	shouldWait=100 (more reuse but 73K cost due to pick station blocking)
+-	61282.0	61282	discard	shouldWait=10 (slightly worse than 15)
+-	60866.0	60866	discard	prefetch lookahead=15 (worse than 20)
+-	61727.0	61727	discard	prefetch lookahead=25 (worse than 20)
+-	61351.0	61351	discard	candidate reuse window=20 (worse, reuse window should stay at 50)
+-	61389.0	61389	discard	store scoring by actual ticks (worse than heuristic dist*5+level*16)
+-	73789.0	73789	discard	store container back to original location (terrible)
+-	61211.0	61211	discard	raise charge threshold from 30% to 35%
